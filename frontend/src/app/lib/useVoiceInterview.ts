@@ -212,7 +212,8 @@ export function useVoiceInterview({
       setSttError("");
       try {
         const form = new FormData();
-        form.append("file", blob, "answer.webm");
+        const filename = blob.type.includes("ogg") ? "answer.ogg" : blob.type.includes("mp4") ? "answer.mp4" : "answer.webm";
+        form.append("file", blob, filename);
         if (sessionId) form.append("sessionId", sessionId);
         const res = await fetch(`${HTTP_BASE}/stt`, {
           method: "POST",
@@ -254,20 +255,33 @@ export function useVoiceInterview({
     if (recording || sttPending) return;
     setSttError("");
     try {
-      const readyStream =
-        (mediaStream && mediaStream.getAudioTracks().length > 0 ? mediaStream : null) ||
-        (await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: false,
-        }));
-      if (!readyStream || readyStream.getAudioTracks().length === 0) {
+      const usableAudioTracks = mediaStream?.getAudioTracks().filter((track) => track.readyState === "live") ?? [];
+      const sourceStream =
+        usableAudioTracks.length > 0
+          ? mediaStream
+          : await navigator.mediaDevices.getUserMedia({
+              audio: true,
+              video: false,
+            });
+      const ownsSourceStream = sourceStream !== mediaStream;
+
+      const audioTracks = sourceStream?.getAudioTracks().filter((track) => track.readyState === "live") ?? [];
+      if (audioTracks.length === 0) {
         throw new Error("no-audio-track");
       }
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : undefined;
+
+      const audioOnlyStream = new MediaStream(audioTracks);
       if (typeof MediaRecorder === "undefined") {
         throw new Error("mediarecorder-unsupported");
       }
-      const recorder = new MediaRecorder(readyStream, mimeType ? { mimeType } : undefined);
+
+      const mimeTypeCandidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/ogg", "audio/mp4"];
+      const mimeType =
+        typeof MediaRecorder.isTypeSupported === "function"
+          ? mimeTypeCandidates.find((candidate) => MediaRecorder.isTypeSupported(candidate))
+          : undefined;
+
+      const recorder = new MediaRecorder(audioOnlyStream, mimeType ? { mimeType } : undefined);
       audioChunksRef.current = [];
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
@@ -277,6 +291,7 @@ export function useVoiceInterview({
       recorder.onstop = () => {
         const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
         audioChunksRef.current = [];
+        if (ownsSourceStream) sourceStream.getTracks().forEach((track) => track.stop());
         if (blob.size > 0) {
           void sendToStt(blob);
         }
@@ -288,10 +303,24 @@ export function useVoiceInterview({
       setRecording(true);
       setNudge(null);
     } catch (err) {
+      const errName =
+        err && typeof err === "object" && "name" in err && typeof (err as { name?: unknown }).name === "string"
+          ? (err as { name: string }).name
+          : "";
       const message =
         err instanceof Error && err.message === "mediarecorder-unsupported"
           ? "Recording not supported in this browser. Please use Chrome/Edge."
-          : "Microphone access failed. Confirm mic permission or close other apps using the mic.";
+          : errName === "NotAllowedError"
+            ? "Microphone permission denied. Allow mic access in the browser settings, then reload."
+            : errName === "NotFoundError"
+              ? "No microphone found. Connect a mic and try again."
+              : errName === "NotReadableError"
+                ? "Microphone is busy. Close other apps using the mic and try again."
+                : errName === "NotSupportedError"
+                  ? "Recording format not supported in this browser. Please use Chrome/Edge."
+                  : errName === "SecurityError"
+                    ? "Microphone access requires a secure context (use http://localhost:3000)."
+                    : "Microphone access failed. Confirm mic permission or close other apps using the mic.";
       setSttError(message);
       setRecording(false);
     }

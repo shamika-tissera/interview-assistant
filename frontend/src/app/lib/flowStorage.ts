@@ -49,6 +49,9 @@ export const DEFAULT_SETUP: InterviewSetup = {
   nudgeHaptics: false,
 };
 
+let cachedSetupRaw: string | null | undefined;
+let cachedSetupSnapshot: InterviewSetup | null = null;
+
 function safeJsonParse<T>(value: string | null): T | null {
   if (!value) return null;
   try {
@@ -60,8 +63,15 @@ function safeJsonParse<T>(value: string | null): T | null {
 
 export function loadSetup(): InterviewSetup | null {
   if (typeof window === "undefined") return null;
-  const parsed = safeJsonParse<Partial<InterviewSetup>>(window.sessionStorage.getItem(SETUP_KEY));
-  if (!parsed) return null;
+  const raw = window.sessionStorage.getItem(SETUP_KEY);
+  if (raw === cachedSetupRaw) return cachedSetupSnapshot;
+  cachedSetupRaw = raw;
+
+  const parsed = safeJsonParse<Partial<InterviewSetup>>(raw);
+  if (!parsed) {
+    cachedSetupSnapshot = null;
+    return null;
+  }
 
   const pack =
     parsed.pack === "swe_behavioral" ||
@@ -74,7 +84,7 @@ export function loadSetup(): InterviewSetup | null {
   const style = parsed.style === "supportive" || parsed.style === "neutral" || parsed.style === "cold" ? parsed.style : DEFAULT_SETUP.style;
   const group = parsed.group === "control" || parsed.group === "treatment" ? parsed.group : DEFAULT_SETUP.group;
 
-  return {
+  cachedSetupSnapshot = {
     ...DEFAULT_SETUP,
     ...parsed,
     pack,
@@ -90,6 +100,7 @@ export function loadSetup(): InterviewSetup | null {
     nudgeSound: typeof parsed.nudgeSound === "boolean" ? parsed.nudgeSound : DEFAULT_SETUP.nudgeSound,
     nudgeHaptics: typeof parsed.nudgeHaptics === "boolean" ? parsed.nudgeHaptics : DEFAULT_SETUP.nudgeHaptics,
   };
+  return cachedSetupSnapshot;
 }
 
 export function saveSetup(setup: InterviewSetup) {
