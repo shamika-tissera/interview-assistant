@@ -54,8 +54,11 @@ function InterviewInner({ setup }: { setup: InterviewSetup | null }) {
     analytics,
     setAnalytics,
     sendAnswer,
+    sendClarification,
     sendTelemetry,
     turn,
+    interviewerCue,
+    lastClarification,
   } = useInterview();
 
   const { metrics: sensorMetrics, videoRef, streamError, stream: mediaStream } = useMediaSensors(status === "active");
@@ -72,6 +75,7 @@ function InterviewInner({ setup }: { setup: InterviewSetup | null }) {
     status,
     style,
     question,
+    interviewerCue,
     sessionId,
     turn,
     mediaStream,
@@ -79,6 +83,7 @@ function InterviewInner({ setup }: { setup: InterviewSetup | null }) {
     analytics,
     setAnalytics,
     sendAnswer,
+    sendClarification,
     sendTelemetry,
     initialAutoListen: setup?.autoListen,
     initialAutoSendVoice: setup?.autoSendVoice,
@@ -95,6 +100,7 @@ function InterviewInner({ setup }: { setup: InterviewSetup | null }) {
     autoSendVoice,
     setAutoSendVoice,
     recording,
+    recordingMode,
     sttPending,
     sttError,
     ttsError,
@@ -106,6 +112,7 @@ function InterviewInner({ setup }: { setup: InterviewSetup | null }) {
     stopRecording,
     speakQuestion,
     sendDraft,
+    sendClarificationDraft,
   } = voice;
 
   useEffect(() => {
@@ -197,6 +204,11 @@ function InterviewInner({ setup }: { setup: InterviewSetup | null }) {
                 <p className={styles.kicker}>Current prompt</p>
                 <div className={styles.bigPrompt}>{question || "Start when you’re ready."}</div>
                 <p className={styles.helper}>{ttsError ? ttsError : STYLE_HELP[style]}</p>
+                {lastClarification && (
+                  <p className={styles.helper} style={{ marginTop: 6 }}>
+                    Interviewer: {lastClarification}
+                  </p>
+                )}
               </div>
               <div className={styles.buttonRow}>
                 {status !== "active" ? (
@@ -216,18 +228,34 @@ function InterviewInner({ setup }: { setup: InterviewSetup | null }) {
                 <div className={styles.panel}>
                   <h2 className={styles.cardTitle}>Voice</h2>
                   <div className={styles.buttonRow}>
-                    <button
-                      type="button"
-                      className={styles.primary}
-                      disabled={status !== "active" || sttPending}
-                      onClick={() => (recording ? stopRecording() : startRecording())}
-                    >
-                      {recording ? "Stop & transcribe" : "Tap to answer"}
-                    </button>
+                    {recording ? (
+                      <button type="button" className={styles.primary} disabled={status !== "active" || sttPending} onClick={stopRecording}>
+                        Stop & transcribe{recordingMode === "clarification" ? " (clarify)" : ""}
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className={styles.primary}
+                          disabled={status !== "active" || sttPending || !question}
+                          onClick={() => startRecording("answer")}
+                        >
+                          Tap to answer
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.secondary}
+                          disabled={status !== "active" || sttPending || !question}
+                          onClick={() => startRecording("clarification")}
+                        >
+                          Tap to clarify
+                        </button>
+                      </>
+                    )}
                     <button
                       type="button"
                       className={styles.secondary}
-                      disabled={!question || sttPending || status !== "active"}
+                      disabled={!question || sttPending || status !== "active" || recording}
                       onClick={() => {
                         stopRecording();
                         speakQuestion(question);
@@ -277,8 +305,21 @@ function InterviewInner({ setup }: { setup: InterviewSetup | null }) {
                     onChange={(e) => setDraft(e.target.value)}
                   />
                   <div className={styles.buttonRow}>
-                    <button type="button" className={styles.secondary} onClick={sendDraft} disabled={!draft.trim() || status !== "active"}>
-                      Send
+                    <button
+                      type="button"
+                      className={styles.secondary}
+                      onClick={sendDraft}
+                      disabled={!draft.trim() || status !== "active" || sttPending || recording}
+                    >
+                      Send answer
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.secondary}
+                      onClick={sendClarificationDraft}
+                      disabled={!draft.trim() || status !== "active" || sttPending || recording || !question}
+                    >
+                      Ask clarification
                     </button>
                   </div>
                 </div>

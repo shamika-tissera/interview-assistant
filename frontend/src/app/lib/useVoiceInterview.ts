@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Analytics,
   HTTP_BASE,
+  InterviewerCue,
   MIN_RECORDING_MS,
   SILENCE_TIMEOUT_MS,
   SessionStatus,
@@ -12,6 +13,8 @@ import {
 } from "./interviewClient";
 
 type SpeakDone = (() => void) | undefined;
+
+type VoiceSendMode = "answer" | "clarification";
 
 export type LiveNudge = {
   kind: "pace" | "ramble" | "center";
@@ -22,6 +25,7 @@ type VoiceInterviewParams = {
   status: SessionStatus;
   style: Style;
   question: string;
+  interviewerCue?: InterviewerCue | null;
   sessionId: string | null;
   turn: number;
   mediaStream: MediaStream | null;
@@ -29,6 +33,7 @@ type VoiceInterviewParams = {
   analytics: Analytics;
   setAnalytics: React.Dispatch<React.SetStateAction<Analytics>>;
   sendAnswer: (answer: string, metricsOverride?: Analytics) => void;
+  sendClarification?: (question: string) => void;
   sendTelemetry?: (event: string, latencyMs?: number, data?: Record<string, unknown>) => void;
   initialAutoListen?: boolean;
   initialAutoSendVoice?: boolean;
@@ -41,6 +46,7 @@ export function useVoiceInterview({
   status,
   style,
   question,
+  interviewerCue,
   sessionId,
   turn,
   mediaStream,
@@ -48,6 +54,7 @@ export function useVoiceInterview({
   analytics,
   setAnalytics,
   sendAnswer,
+  sendClarification,
   sendTelemetry,
   initialAutoListen = true,
   initialAutoSendVoice = true,
@@ -60,6 +67,7 @@ export function useVoiceInterview({
   const [autoSendVoice, setAutoSendVoice] = useState<boolean>(initialAutoSendVoice);
   const [autoListen, setAutoListen] = useState<boolean>(initialAutoListen);
   const [recording, setRecording] = useState<boolean>(false);
+  const [recordingMode, setRecordingMode] = useState<VoiceSendMode>("answer");
   const [sttPending, setSttPending] = useState<boolean>(false);
   const [sttError, setSttError] = useState<string>("");
   const [ttsError, setTtsError] = useState<string>("");
@@ -84,6 +92,8 @@ export function useVoiceInterview({
   const recordingRef = useRef<boolean>(false);
   const statusRef = useRef<SessionStatus>(status);
   const turnRef = useRef<number>(turn);
+  const recordingModeRef = useRef<VoiceSendMode>("answer");
+  const lastCueIdRef = useRef<number | null>(null);
 
   const userTalking = useMemo(() => (sensorMetrics.volume || 0) > 0.045, [sensorMetrics.volume]);
   const listening = recording || sttPending;
@@ -226,9 +236,13 @@ export function useVoiceInterview({
         const transcript = (json.transcript as string) || "";
         setDraft(transcript);
         if (autoSendVoice && transcript.trim()) {
-          const finalMetrics = buildMetrics(transcript);
-          setAnalytics(finalMetrics);
-          sendAnswer(transcript, finalMetrics);
+          if (recordingModeRef.current === "clarification" && sendClarification) {
+            sendClarification(transcript);
+          } else {
+            const finalMetrics = buildMetrics(transcript);
+            setAnalytics(finalMetrics);
+            sendAnswer(transcript, finalMetrics);
+          }
         }
       } catch {
         setSttError("Transcription failed. Try again.");
@@ -236,7 +250,7 @@ export function useVoiceInterview({
         setSttPending(false);
       }
     },
-    [autoSendVoice, buildMetrics, sendAnswer, sessionId, setAnalytics],
+    [autoSendVoice, buildMetrics, sendAnswer, sendClarification, sessionId, setAnalytics],
   );
 
   const stopRecording = useCallback(() => {
@@ -251,10 +265,12 @@ export function useVoiceInterview({
     offCenterSinceRef.current = null;
   }, []);
 
-  const startRecording = useCallback(async () => {
+  const startRecording = useCallback(async (mode: VoiceSendMode = "answer") => {
     if (recording || sttPending) return;
     setSttError("");
     try {
+      setRecordingMode(mode);
+      recordingModeRef.current = mode;
       const usableAudioTracks = mediaStream?.getAudioTracks().filter((track) => track.readyState === "live") ?? [];
       const sourceStream =
         usableAudioTracks.length > 0
@@ -340,6 +356,7 @@ export function useVoiceInterview({
     const intervalId = window.setInterval(() => {
       if (statusRef.current !== "active") return;
       if (!recordingRef.current) return;
+      if (recordingModeRef.current !== "answer") return;
 
       const now = performance.now();
       const startTs = recordStartRef.current ?? now;
@@ -513,6 +530,19 @@ export function useVoiceInterview({
   );
 
   useEffect(() => {
+    if (!interviewerCue?.text) return;
+    if (lastCueIdRef.current === interviewerCue.id) return;
+    lastCueIdRef.current = interviewerCue.id;
+    if (status !== "active") return;
+    stopRecording();
+    speakQuestion(interviewerCue.text, () => {
+      if (autoListen) {
+        startRecording();
+      }
+    });
+  }, [autoListen, interviewerCue, speakQuestion, startRecording, status, stopRecording]);
+
+  useEffect(() => {
     if (status !== "active" || !question) {
       if (status !== "active") lastSpokenQuestionRef.current = "";
       return;
@@ -536,6 +566,14 @@ export function useVoiceInterview({
     setDraft("");
   }, [buildMetrics, draft, sendAnswer, setAnalytics]);
 
+  const sendClarificationDraft = useCallback(() => {
+    const trimmed = draft.trim();
+    if (!trimmed || !sendClarification) return;
+    stopRecording();
+    sendClarification(trimmed);
+    setDraft("");
+  }, [draft, sendClarification, stopRecording]);
+
   useEffect(() => {
     if (status === "idle" && draft) {
       setDraft("");
@@ -551,6 +589,7 @@ export function useVoiceInterview({
     autoListen,
     setAutoListen,
     recording,
+    recordingMode,
     sttPending,
     sttError,
     ttsError,
@@ -562,5 +601,6 @@ export function useVoiceInterview({
     stopRecording,
     speakQuestion,
     sendDraft,
+    sendClarificationDraft,
   };
 }

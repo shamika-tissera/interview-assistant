@@ -272,6 +272,91 @@ def pick_question(style: InterviewerStyle, turn: int, pack: Optional[str] = None
     return items[turn % len(items)]
 
 
+def fallback_clarification_response(
+    style: InterviewerStyle,
+    prompt_question: str,
+    clarification_question: str,
+    pack: Optional[str] = None,
+    difficulty: Optional[str] = None,
+) -> str:
+    prompt_question = (prompt_question or "").strip()
+    clarification_question = (clarification_question or "").strip()
+    diff = (difficulty or "standard").strip()
+
+    tone_prefix = {
+        InterviewerStyle.SUPPORTIVE: "Good question — ",
+        InterviewerStyle.NEUTRAL: "Clarifying — ",
+        InterviewerStyle.COLD: "Listen — ",
+    }[style]
+
+    pack_hint = (pack or "").lower()
+    is_system_design = "system" in pack_hint or "design" in pack_hint
+
+    if is_system_design:
+        guidance = (
+            "State your assumptions explicitly (scale/traffic, latency, consistency), then focus on APIs, data model, and scaling. "
+            "If constraints aren’t specified, choose reasonable ones and justify them."
+        )
+    else:
+        guidance = (
+            "Pick one concrete example and answer with STAR (situation, task, actions, result). "
+            "If timeframe/scope isn’t specified, a recent 1–2 year example is fine; lead with the outcome."
+        )
+
+    if diff == "hard" and is_system_design:
+        guidance = (
+            "Be decisive: state assumptions (traffic, SLOs, data size) and tradeoffs, then outline APIs, storage, and failure modes."
+        )
+    elif diff == "hard":
+        guidance = "Be concise: lead with the outcome, then 2–3 specific actions and one measurable result."
+
+    restated = prompt_question if prompt_question.endswith("?") else f"{prompt_question}?"
+    response = f"{tone_prefix}{guidance}"
+    if clarification_question:
+        response = f"{response} On your question: {clarification_question}"
+    return f"{response} Original prompt: {restated}".strip()
+
+
+def _is_answer_seeking_clarification(text: str) -> bool:
+    lower = (text or "").strip().lower()
+    if not lower:
+        return False
+    patterns = [
+        r"\bwhat should i say\b",
+        r"\bwhat do i say\b",
+        r"\bwrite (me )?an answer\b",
+        r"\bgive (me )?(a )?sample answer\b",
+        r"\bgive (me )?the answer\b",
+        r"\bhow would you answer\b",
+        r"\bwhat is the best answer\b",
+        r"\bcan you answer\b",
+    ]
+    return any(re.search(pattern, lower) for pattern in patterns)
+
+
+def refusal_clarification_response(style: InterviewerStyle, prompt_question: str) -> str:
+    prompt_question = (prompt_question or "").strip()
+    restated = prompt_question if prompt_question.endswith("?") else f"{prompt_question}?"
+
+    if style == InterviewerStyle.SUPPORTIVE:
+        message = (
+            "I can clarify what I’m looking for, but I can’t write the answer for you. "
+            "Pick one example, lead with the outcome, then walk me through your actions and the measurable result."
+        )
+    elif style == InterviewerStyle.COLD:
+        message = (
+            "I’m not giving you the answer. "
+            "Pick one example and give me: context, what you did, and the outcome—numbers if you have them."
+        )
+    else:
+        message = (
+            "I can clarify expectations, but I won’t provide a model answer. "
+            "Use one concrete example and structure it as situation, task, actions, result."
+        )
+
+    return f"{message} Original prompt: {restated}".strip()
+
+
 def pick_follow_up(style: InterviewerStyle, answer: str, metrics: Optional[Dict[str, Any]] = None) -> str:
     raw = (answer or "").strip()
     lower = raw.lower()
@@ -488,6 +573,19 @@ def parse_question_response(text: str) -> Optional[str]:
     return cleaned or None
 
 
+def parse_clarification_response(text: str) -> Optional[str]:
+    data = _extract_json_block(text)
+    message: Optional[str] = None
+    if data:
+        message = data.get("message") or data.get("clarification") or data.get("response") or data.get("text")
+    if isinstance(message, list):
+        message = " ".join(str(part) for part in message)
+    if not isinstance(message, str) or not message.strip():
+        message = (text or "").strip()
+    cleaned = (message or "").strip()
+    return cleaned or None
+
+
 async def llm_generate_coaching(
     style: InterviewerStyle, question: str, answer: str, turn: int, metrics: Optional[Dict[str, Any]] = None
 ) -> Optional[Tuple[Optional[str], List[Dict[str, str]]]]:
@@ -636,6 +734,88 @@ async def llm_generate_question(
     parsed = parse_question_response(content)
     if not parsed:
         LOG.warning("NVIDIA LLM question parse failed; raw content: %s", content[:200])
+    return parsed
+
+
+async def llm_generate_clarification(
+    style: InterviewerStyle,
+    prompt_question: str,
+    clarification_question: str,
+    turn: int,
+    history: Optional[List[Tuple[str, str]]] = None,
+    pack: Optional[str] = None,
+    difficulty: Optional[str] = None,
+) -> Optional[str]:
+    api_key = NVIDIA_API_KEY or os.getenv("NVIDIA_API_KEY")
+    if not api_key:
+        LOG.warning("NVIDIA_API_KEY missing; clarification fallback engaged (style=%s turn=%s)", style, turn)
+        return None
+
+    system_prompt = (
+        "You are an interviewer. The candidate is asking a clarification question about the current interview prompt. "
+        "Answer the clarification succinctly (1–3 short sentences) without giving a full solution/model answer. "
+        "End by restating the original prompt as one sentence. "
+        "Return JSON only: {\"message\":\"string\"}. Avoid markdown/code fences."
+    )
+    recent_pairs = history[-3:] if history else []
+    history_block = "\n".join([f"Q: {q}\nA: {a}" for q, a in recent_pairs]) or "None yet"
+    user_prompt = (
+        f"Style: {style.value}\n"
+        f"Practice pack: {pack or 'default'}\n"
+        f"Difficulty: {difficulty or 'standard'}\n"
+        f"Turn index (0-based): {turn}\n"
+        f"Current prompt: {prompt_question}\n"
+        f"Candidate clarification question: {clarification_question}\n"
+        f"Recent Q/A (most recent last):\n{history_block}\n"
+        "Return JSON only."
+    )
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": NVIDIA_LLM_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "max_tokens": 180,
+        "temperature": 0.5,
+        "top_p": 1.0,
+        "stream": False,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=NVIDIA_LLM_TIMEOUT) as client:
+            LOG.info(
+                "Calling NVIDIA LLM (clarification): style=%s turn=%s prompt_len=%s clarification_len=%s",
+                style,
+                turn,
+                len(prompt_question),
+                len(clarification_question),
+            )
+            resp = await client.post(NVIDIA_LLM_URL, headers=headers, json=payload)
+    except Exception as exc:  # pragma: no cover - network/runtime safety
+        LOG.warning("NVIDIA LLM clarification request failed: %s", exc)
+        return None
+
+    if resp.status_code != 200:
+        LOG.warning("NVIDIA LLM responded with %s (clarification): %s", resp.status_code, resp.text[:200])
+        return None
+
+    try:
+        data = resp.json()
+        choices = data.get("choices") or []
+        content = choices[0].get("message", {}).get("content", "").strip() if choices else ""
+    except Exception:
+        content = ""
+
+    if not content:
+        LOG.warning("NVIDIA LLM clarification returned empty content")
+        return None
+    parsed = parse_clarification_response(content)
+    if not parsed:
+        LOG.warning("NVIDIA LLM clarification parse failed; raw content: %s", content[:200])
     return parsed
 
 
@@ -917,6 +1097,9 @@ async def send_reaction(
 
 async def handle_message(ws: WebSocket, state: SessionState, payload: Dict[str, Any]) -> None:
     msg_type = payload.get("type")
+    if not isinstance(msg_type, str):
+        await ws.send_json({"type": "error", "message": "Message type must be a string."})
+        return
     if msg_type == "start_session":
         # Always mint a fresh session id so "restart" creates a new DB row (no PK collisions).
         state.session_id = str(uuid.uuid4())
@@ -979,6 +1162,76 @@ async def handle_message(ws: WebSocket, state: SessionState, payload: Dict[str, 
             state.style = InterviewerStyle(new_style)
             await ws.send_json({"type": "style_switched", "style": state.style})
             await send_question(ws, state)
+        return
+
+    if msg_type == "user_clarification":
+        clarification = payload.get("question") or payload.get("clarification") or payload.get("text") or ""
+        clarification = str(clarification).strip()
+        if not clarification:
+            await ws.send_json({"type": "error", "message": "Clarification question is empty."})
+            return
+
+        prompt_question = (state.last_question or "").strip()
+        if not prompt_question:
+            await ws.send_json({"type": "error", "message": "No active prompt yet. Start a session first."})
+            return
+
+        prompt_question = prompt_question[:800]
+        clarification = clarification[:600]
+
+        if _is_answer_seeking_clarification(clarification):
+            source = "guardrail"
+            response = refusal_clarification_response(state.style, prompt_question)
+        else:
+            source = "llm"
+            response = await llm_generate_clarification(
+                state.style,
+                prompt_question=prompt_question,
+                clarification_question=clarification,
+                turn=state.turn,
+                history=state.history,
+                pack=state.pack,
+                difficulty=state.difficulty,
+            )
+            if not response:
+                source = "fallback"
+                response = fallback_clarification_response(
+                    state.style,
+                    prompt_question=prompt_question,
+                    clarification_question=clarification,
+                    pack=state.pack,
+                    difficulty=state.difficulty,
+                )
+
+        await ws.send_json(
+            {
+                "type": "clarification",
+                "turn": state.turn,
+                "style": state.style,
+                "message": (response or "")[:1400],
+                "source": source,
+            }
+        )
+        try:
+            async with get_session() as session:
+                session.add(
+                    TelemetryRecord(
+                        session_id=state.session_id,
+                        event_type="clarification",
+                        group_name=state.group,
+                        payload=json.dumps(
+                            {
+                                "turn": state.turn,
+                                "prompt": prompt_question,
+                                "clarification": clarification,
+                                "source": source,
+                            }
+                        ),
+                    )
+                )
+                await session.commit()
+        except Exception as exc:
+            LOG.warning("Failed to log clarification telemetry (session=%s): %s", state.session_id, exc)
         return
 
     if msg_type == "user_answer":
@@ -1085,6 +1338,9 @@ async def interview_socket(ws: WebSocket) -> None:
                 payload = json.loads(raw)
             except json.JSONDecodeError:
                 await ws.send_json({"type": "error", "message": "Payload must be JSON"})
+                continue
+            if not isinstance(payload, dict):
+                await ws.send_json({"type": "error", "message": "Payload must be a JSON object"})
                 continue
 
             await handle_message(ws, state, payload)

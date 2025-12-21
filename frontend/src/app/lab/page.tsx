@@ -23,10 +23,12 @@ export default function LabPage() {
     analytics,
     setAnalytics,
     sendAnswer,
+    sendClarification,
     setMessages,
     sendCheckIn,
     sendTelemetry,
     turn,
+    interviewerCue,
   } = useInterview();
 
   const [confidence, setConfidence] = useState<number>(70);
@@ -43,6 +45,7 @@ export default function LabPage() {
     status,
     style,
     question,
+    interviewerCue,
     sessionId,
     turn,
     mediaStream,
@@ -50,6 +53,7 @@ export default function LabPage() {
     analytics,
     setAnalytics,
     sendAnswer,
+    sendClarification,
     sendTelemetry,
     nudgesEnabled: false,
   });
@@ -61,6 +65,7 @@ export default function LabPage() {
     autoSendVoice,
     setAutoSendVoice,
     recording,
+    recordingMode,
     sttPending,
     sttError,
     ttsError,
@@ -71,6 +76,7 @@ export default function LabPage() {
     stopRecording,
     speakQuestion,
     sendDraft,
+    sendClarificationDraft,
   } = voice;
 
   useEffect(() => {
@@ -217,16 +223,31 @@ export default function LabPage() {
                   Questions are spoken in her adaptive voice (Coqui TTS). {ttsError && ttsError}
                 </div>
                 <div className={styles.voiceControls}>
+                  {recording ? (
+                    <button className={styles.secondary} disabled={status !== "active" || sttPending} onClick={stopRecording}>
+                      Stop & transcribe{recordingMode === "clarification" ? " (clarify)" : ""}
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        className={styles.secondary}
+                        disabled={status !== "active" || sttPending || !question}
+                        onClick={() => startRecording("answer")}
+                      >
+                        Tap to answer
+                      </button>
+                      <button
+                        className={styles.secondary}
+                        disabled={status !== "active" || sttPending || !question}
+                        onClick={() => startRecording("clarification")}
+                      >
+                        Tap to clarify
+                      </button>
+                    </>
+                  )}
                   <button
                     className={styles.secondary}
-                    disabled={status !== "active" || sttPending}
-                    onClick={() => (recording ? stopRecording() : startRecording())}
-                  >
-                    {recording ? "Stop & transcribe" : "Tap to answer"}
-                  </button>
-                  <button
-                    className={styles.secondary}
-                    disabled={!question || sttPending}
+                    disabled={!question || sttPending || recording}
                     onClick={() => {
                       stopRecording();
                       speakQuestion(question);
@@ -278,9 +299,18 @@ export default function LabPage() {
             </div>
             {sttError && <div className={styles.errorText}>{sttError}</div>}
             <div className={styles.answerActions}>
-              <button className={styles.primary} onClick={sendDraft} disabled={!draft.trim() || status !== "active"}>
-                Send answer
-              </button>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button className={styles.primary} onClick={sendDraft} disabled={!draft.trim() || status !== "active" || recording || sttPending}>
+                  Send answer
+                </button>
+                <button
+                  className={styles.secondary}
+                  onClick={sendClarificationDraft}
+                  disabled={!draft.trim() || status !== "active" || recording || sttPending || !question}
+                >
+                  Ask clarification
+                </button>
+              </div>
               <div className={styles.helperText}>
                 Live answers auto-send when you stop talking. Voice latency is logged for fairness audits.
               </div>

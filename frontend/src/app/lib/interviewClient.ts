@@ -16,6 +16,8 @@ export type Tip = { summary: string; detail: string };
 
 export type SessionStatus = "idle" | "connecting" | "connected" | "active" | "error" | "closed";
 
+export type InterviewerCue = { id: number; text: string };
+
 export type Analytics = {
   speakingRate: number; // words per minute (estimate)
   pauseRatio: number; // fraction 0-1
@@ -51,6 +53,41 @@ export const STYLE_HELP: Record<Style, string> = {
 
 export const SILENCE_TIMEOUT_MS = 2600;
 export const MIN_RECORDING_MS = 1200;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function readStyle(value: unknown): Style | undefined {
+  if (value === "supportive" || value === "neutral" || value === "cold") return value;
+  return undefined;
+}
+
+function readGroup(value: unknown): "control" | "treatment" | undefined {
+  if (value === "control" || value === "treatment") return value;
+  return undefined;
+}
+
+function readTips(value: unknown): Tip[] {
+  if (!Array.isArray(value)) return [];
+  const tips: Tip[] = [];
+  for (const item of value) {
+    if (!isRecord(item)) continue;
+    const summary = readString(item.summary);
+    const detail = readString(item.detail);
+    if (summary && detail) tips.push({ summary, detail });
+    if (tips.length >= 2) break;
+  }
+  return tips;
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -237,6 +274,8 @@ export function useInterview() {
   const [tips, setTips] = useState<Tip[]>([]);
   const [turn, setTurn] = useState<number>(0);
   const [analytics, setAnalytics] = useState<Analytics>(initialAnalytics);
+  const [interviewerCue, setInterviewerCue] = useState<InterviewerCue | null>(null);
+  const [lastClarification, setLastClarification] = useState<string | null>(null);
   const pendingStart = useRef<{
     style: Style;
     group: "control" | "treatment";
@@ -247,6 +286,7 @@ export function useInterview() {
     difficulty?: string;
   } | null>(null);
   const latencyRef = useRef<Record<number, number>>({});
+  const cueSeqRef = useRef<number>(0);
 
   const resetState = useCallback(() => {
     setMessages([]);
@@ -254,6 +294,8 @@ export function useInterview() {
     setQuestion("");
     setTurn(0);
     setAnalytics(initialAnalytics);
+    setInterviewerCue(null);
+    setLastClarification(null);
     setSessionId(null);
     setGroup("treatment");
     setStatus("idle");
@@ -282,39 +324,73 @@ export function useInterview() {
     };
 
     ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      switch (data.type) {
+      let data: unknown;
+      try {
+        data = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (!isRecord(data)) return;
+      const msgType = readString(data.type);
+      if (!msgType) return;
+      switch (msgType) {
         case "session_ready":
-          setSessionId(data.session_id);
-          setStyle(data.style ?? "neutral");
-          if (data.group) setGroup(data.group);
+          setSessionId(readString(data.session_id) ?? null);
+          setStyle(readStyle(data.style) ?? "neutral");
+          {
+            const nextGroup = readGroup(data.group);
+            if (nextGroup) setGroup(nextGroup);
+          }
           break;
         case "session_started":
-          setSessionId(data.session_id);
-          setStyle(data.style ?? "neutral");
-          setTurn(data.turn ?? 0);
-          if (data.group) setGroup(data.group);
+          setSessionId(readString(data.session_id) ?? null);
+          setStyle(readStyle(data.style) ?? "neutral");
+          setTurn(readNumber(data.turn) ?? 0);
+          {
+            const nextGroup = readGroup(data.group);
+            if (nextGroup) setGroup(nextGroup);
+          }
           setStatus("active");
           break;
         case "question":
-          setQuestion(data.question);
-          setStyle(data.style ?? style);
-          if (typeof data.turn === "number") setTurn(data.turn);
-          if (data.source !== "follow_up" && data.question) {
+          setQuestion(readString(data.question) ?? "");
+          setStyle(readStyle(data.style) ?? style);
+          setLastClarification(null);
+          {
+            const nextTurn = readNumber(data.turn);
+            if (nextTurn !== undefined) setTurn(nextTurn);
+          }
+          if (readString(data.source) !== "follow_up" && readString(data.question)) {
             setMessages((prev) => {
-              const nextTurn = typeof data.turn === "number" ? data.turn : prev.length;
+              const nextTurn = readNumber(data.turn) ?? prev.length;
               const last = prev.length > 0 ? prev[prev.length - 1] : null;
               if (last && last.role === "interviewer" && last.content === data.question && last.turn === nextTurn) return prev;
               return [
                 ...prev,
                 {
                   role: "interviewer",
-                  content: data.question,
+                  content: readString(data.question) ?? "",
                   turn: nextTurn,
-                  style: data.style ?? style,
+                  style: readStyle(data.style) ?? style,
                 },
               ];
             });
+          }
+          break;
+        case "clarification":
+          if (readString(data.message)) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "interviewer",
+                content: readString(data.message) ?? "",
+                turn: readNumber(data.turn) ?? prev.length,
+                style: readStyle(data.style) ?? style,
+              },
+            ]);
+            cueSeqRef.current += 1;
+            setInterviewerCue({ id: cueSeqRef.current, text: readString(data.message) ?? "" });
+            setLastClarification(readString(data.message) ?? "");
           }
           break;
         case "interviewer_message":
@@ -322,23 +398,29 @@ export function useInterview() {
             ...prev,
             {
               role: "interviewer",
-              content: data.message,
-              turn: data.turn ?? prev.length,
-              style: data.style ?? style,
+              content: readString(data.message) ?? "",
+              turn: readNumber(data.turn) ?? prev.length,
+              style: readStyle(data.style) ?? style,
             },
           ]);
           break;
         case "tips":
-          setTips(data.items ?? []);
-          if (typeof data.turn === "number" && latencyRef.current[data.turn] !== undefined) {
-            const sent = latencyRef.current[data.turn];
-            const latency = Date.now() - sent;
-            sendTelemetry("latency", latency, { turn: data.turn });
-            delete latencyRef.current[data.turn];
+          {
+            const items = readTips(data.items);
+            setTips(items);
+          }
+          {
+            const tipTurn = readNumber(data.turn);
+            if (tipTurn !== undefined && latencyRef.current[tipTurn] !== undefined) {
+              const sent = latencyRef.current[tipTurn];
+              const latency = Date.now() - sent;
+              sendTelemetry("latency", latency, { turn: tipTurn });
+              delete latencyRef.current[tipTurn];
+            }
           }
           break;
         case "style_switched":
-          setStyle(data.style ?? style);
+          setStyle(readStyle(data.style) ?? style);
           break;
         case "pong":
           break;
@@ -385,6 +467,8 @@ export function useInterview() {
       setQuestion("");
       setTurn(0);
       setSessionId(null);
+      setInterviewerCue(null);
+      setLastClarification(null);
       if (socket && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: "start_session", style: initialStyle, group: initialGroup, consent, accent, notes, pack, difficulty }));
         setStatus("active");
@@ -414,6 +498,17 @@ export function useInterview() {
       const answerTurn = turn + 1;
       latencyRef.current[answerTurn] = Date.now();
       socket.send(JSON.stringify({ type: "user_answer", answer: trimmed, metrics: metricsOverride }));
+    },
+    [socket, style, turn],
+  );
+
+  const sendClarification = useCallback(
+    (question: string) => {
+      if (!socket || socket.readyState !== WebSocket.OPEN) return;
+      const trimmed = question.trim();
+      if (!trimmed) return;
+      setMessages((prev) => [...prev, { role: "user", content: trimmed, turn, style }]);
+      socket.send(JSON.stringify({ type: "user_clarification", question: trimmed }));
     },
     [socket, style, turn],
   );
@@ -458,7 +553,10 @@ export function useInterview() {
     setMessages,
     setTips,
     sendAnswer,
+    sendClarification,
     sendCheckIn,
     sendTelemetry,
+    interviewerCue,
+    lastClarification,
   };
 }
