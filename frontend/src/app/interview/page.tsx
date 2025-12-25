@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "../flow.module.css";
 import { Avatar } from "../components/Avatar";
+import { HeyGenAvatar } from "../components/HeyGenAvatar";
 import { STYLE_HELP, STYLE_LABELS, type Style, useInterview, useMediaSensors } from "../lib/interviewClient";
 import { consumeAutostart, saveReviewSnapshot, useStoredSetup, type InterviewSetup } from "../lib/flowStorage";
 import { useVoiceInterview } from "../lib/useVoiceInterview";
@@ -39,6 +40,12 @@ function InterviewInner({ setup }: { setup: InterviewSetup | null }) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("answer");
   const previewRef = useRef<HTMLVideoElement | null>(null);
+  
+  // 准备状态和 Avatar 选择
+  const [isPreparing, setIsPreparing] = useState(true);
+  const [useHeyGenAvatar, setUseHeyGenAvatar] = useState(true);
+  const [avatarReady, setAvatarReady] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
 
   const {
     status,
@@ -111,21 +118,25 @@ function InterviewInner({ setup }: { setup: InterviewSetup | null }) {
     nudge,
     listening,
     userTalking,
-	    startRecording,
-	    stopRecording,
-	    speakQuestion,
-	    sendDraft,
-	    sendClarificationDraft,
-	  } = voice;
+    startRecording,
+    stopRecording,
+    speakQuestion,
+    sendDraft,
+    sendClarificationDraft,
+  } = voice;
 
   const autoEndedRef = useRef<boolean>(false);
 
   useEffect(() => {
+    consumeAutostart();
+  }, []);
+
+  const startInterview = useCallback(() => {
     if (!setup) return;
-    if (status !== "idle" && status !== "closed") return;
-    if (!consumeAutostart()) return;
+    
     const maxQuestions = setup.limitMode === "questions" ? setup.maxQuestions : undefined;
     const durationSeconds = setup.limitMode === "time" ? setup.durationMinutes * 60 : undefined;
+    
     start(
       setup.style,
       setup.group,
@@ -138,25 +149,20 @@ function InterviewInner({ setup }: { setup: InterviewSetup | null }) {
       durationSeconds,
       setup.customQuestions,
     );
-  }, [setup, start, status]);
+    
+    setIsPreparing(false);
+    setIsStarting(false);
+  }, [setup, start]);
 
   const handleStart = useCallback(() => {
     if (!setup) return;
-    const maxQuestions = setup.limitMode === "questions" ? setup.maxQuestions : undefined;
-    const durationSeconds = setup.limitMode === "time" ? setup.durationMinutes * 60 : undefined;
-    start(
-      setup.style,
-      setup.group,
-      setup.consent,
-      setup.accent,
-      setup.notes,
-      setup.pack,
-      setup.difficulty,
-      maxQuestions,
-      durationSeconds,
-      setup.customQuestions,
-    );
-  }, [setup, start]);
+    setIsStarting(true);
+    if (useHeyGenAvatar && !avatarReady) {
+      console.log("[Interview] Waiting for HeyGen Avatar to be ready...");
+      return;
+    }
+    startInterview();
+  }, [setup, useHeyGenAvatar, avatarReady, startInterview]);
 
   const handleEnd = useCallback(() => {
     if (!setup) return;
@@ -172,6 +178,15 @@ function InterviewInner({ setup }: { setup: InterviewSetup | null }) {
     stop();
     router.push(sid ? `/review?sessionId=${encodeURIComponent(sid)}` : "/review");
   }, [messages, router, sessionId, setup, stop, stopRecording, tips]);
+
+  useEffect(() => {
+    if (isStarting && useHeyGenAvatar && avatarReady && status === "idle" && setup) {
+      console.log("[Interview] Avatar ready, starting interview...");
+      setTimeout(() => {
+        startInterview();
+      }, 500);
+    }
+  }, [isStarting, useHeyGenAvatar, avatarReady, status, setup, startInterview]);
 
   useEffect(() => {
     if (!setup) return;
@@ -220,276 +235,178 @@ function InterviewInner({ setup }: { setup: InterviewSetup | null }) {
     <main className={styles.shell}>
       <div className={styles.container}>
         <video ref={videoRef} muted playsInline className={styles.sensorVideo} />
+        
         <div className={styles.topBar}>
-          <Link className={styles.link} href="/setup">
-            Setup
-          </Link>
+          <Link className={styles.link} href="/setup">Setup</Link>
           <div className={styles.tabs} aria-label="Interview tabs">
-            <button type="button" className={`${styles.tab} ${tab === "answer" ? styles.tabActive : ""}`} onClick={() => setTab("answer")}>
-              Answer
-            </button>
-            <button type="button" className={`${styles.tab} ${tab === "coach" ? styles.tabActive : ""}`} onClick={() => setTab("coach")}>
-              Coach
-            </button>
-            <button
-              type="button"
-              className={`${styles.tab} ${tab === "transcript" ? styles.tabActive : ""}`}
-              onClick={() => setTab("transcript")}
-            >
-              Transcript
-            </button>
+            <button type="button" className={`${styles.tab} ${tab === "answer" ? styles.tabActive : ""}`} onClick={() => setTab("answer")}>Answer</button>
+            <button type="button" className={`${styles.tab} ${tab === "coach" ? styles.tabActive : ""}`} onClick={() => setTab("coach")}>Coach</button>
+            <button type="button" className={`${styles.tab} ${tab === "transcript" ? styles.tabActive : ""}`} onClick={() => setTab("transcript")}>Transcript</button>
           </div>
           <div className={styles.badge}>{status.toUpperCase()}</div>
         </div>
 
-        {tab === "answer" && (
-          <div className={styles.card}>
-            <div className={styles.statusRow}>
-              <div>
-                <p className={styles.kicker}>Current prompt</p>
-                <div className={styles.bigPrompt}>{question || "Start when you’re ready."}</div>
-                <p className={styles.helper}>{ttsError ? ttsError : STYLE_HELP[style]}</p>
-                {lastClarification && (
-                  <p className={styles.helper} style={{ marginTop: 6 }}>
-                    Interviewer: {lastClarification}
-                  </p>
-                )}
-              </div>
-              <div className={styles.buttonRow}>
-                {status !== "active" ? (
-                  <button type="button" className={styles.primary} disabled={!setup || disabled} onClick={handleStart}>
-                    Start interview
-                  </button>
-                ) : (
-                  <button type="button" className={styles.secondary} onClick={handleEnd}>
-                    End session
-                  </button>
-                )}
-              </div>
+        <div className={styles.card}>
+          <div className={styles.statusRow}>
+            <div>
+              <p className={styles.kicker}>Current prompt</p>
+              <div className={styles.bigPrompt}>{question || "Start when you’re ready."}</div>
+              <p className={styles.helper}>{ttsError ? ttsError : STYLE_HELP[style]}</p>
             </div>
+            <div className={styles.buttonRow}>
+              {status === "active" && (
+                <button type="button" className={styles.secondary} onClick={handleEnd}>End session</button>
+              )}
+            </div>
+          </div>
 
-            <div className={styles.section}>
-              <div className={styles.twoCol}>
-                <div className={styles.panel}>
-                  <h2 className={styles.cardTitle}>Voice</h2>
-                  <div className={styles.buttonRow}>
-                    {recording ? (
-                      <button type="button" className={styles.primary} disabled={status !== "active" || sttPending} onClick={stopRecording}>
-                        Stop & transcribe{recordingMode === "clarification" ? " (clarify)" : ""}
+          <div className={styles.section}>
+            <div className={styles.twoCol}>
+              {/* Left Column: Controls or Prep */}
+              <div className={styles.panel} style={{ position: "relative" }}>
+                {isPreparing ? (
+                  <div className={styles.section}>
+                    <h2 className={styles.cardTitle}>Preparation</h2>
+                    <p className={styles.cardText}>Choose your interviewer appearance and wait for initialization.</p>
+                    
+                    <div className={styles.buttonRow}>
+                      <button
+                        type="button"
+                        className={`${styles.pill} ${!useHeyGenAvatar ? styles.pillActive : ""}`}
+                        onClick={() => setUseHeyGenAvatar(false)}
+                      >
+                        CSS Avatar
                       </button>
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          className={styles.primary}
-                          disabled={status !== "active" || sttPending || !question}
-                          onClick={() => startRecording("answer")}
-                        >
-                          Tap to answer
-                        </button>
-                        <button
-                          type="button"
-                          className={styles.secondary}
-                          disabled={status !== "active" || sttPending || !question}
-                          onClick={() => startRecording("clarification")}
-                        >
-                          Tap to clarify
-                        </button>
-                      </>
-                    )}
-                    <button
-                      type="button"
-                      className={styles.secondary}
-                      disabled={!question || sttPending || status !== "active" || recording}
-                      onClick={() => {
-                        stopRecording();
-                        speakQuestion(question);
-                      }}
-                    >
-                      Replay
-                    </button>
-                  </div>
-                  <p className={styles.helper} style={{ marginTop: 8 }}>
-                    {listening ? (sttPending ? "Transcribing…" : "Recording — speak naturally.") : "Not recording."}
-                  </p>
-                  {nudge && (
-                    <div className={styles.nudge} role="status" aria-live="polite">
-                      <span className={styles.nudgeDot} aria-hidden />
-                      <span>{nudge.message}</span>
+                      <button
+                        type="button"
+                        className={`${styles.pill} ${useHeyGenAvatar ? styles.pillActive : ""}`}
+                        onClick={() => setUseHeyGenAvatar(true)}
+                      >
+                        HeyGen Avatar
+                      </button>
                     </div>
-                  )}
-                  {sttError && (
-                    <p className={styles.helper} style={{ marginTop: 8, color: "#dc2626" }}>
-                      {sttError}
-                    </p>
-                  )}
-                </div>
 
-                <div className={styles.panel}>
-                  <h2 className={styles.cardTitle}>Presence</h2>
-                  <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                    <Avatar style={style} talking={interviewerTalking} userTalking={userTalking} listening={listening} />
-                    <div>
-                      <div className={styles.badge}>{STYLE_LABELS[style]}</div>
-                      <p className={styles.helper} style={{ marginTop: 10 }}>
-                        {lastTip ? lastTip.summary : "Coaching appears after your first answer."}
+                    <div className={styles.buttonRow} style={{ marginTop: "24px" }}>
+                      <button
+                        type="button"
+                        className={styles.primary}
+                        disabled={isStarting || (useHeyGenAvatar && !avatarReady)}
+                        onClick={handleStart}
+                        style={{ width: "100%", padding: "16px" }}
+                      >
+                        {isStarting ? "Starting..." : "Start Interview"}
+                      </button>
+                    </div>
+                    {isStarting && useHeyGenAvatar && !avatarReady && (
+                      <p className={styles.helper} style={{ textAlign: "center", marginTop: "8px", color: "#3b82f6" }}>
+                        Waiting for avatar...
                       </p>
-                    </div>
+                    )}
                   </div>
-                </div>
-              </div>
-
-              <details className={styles.panel}>
-                <summary className={styles.detailsSummary}>Type instead (optional)</summary>
-                <div className={styles.section}>
-                  <textarea
-                    className={styles.textarea}
-                    placeholder="Speak to fill this automatically. Type only if you prefer."
-                    value={draft}
-                    disabled={status !== "active"}
-                    onChange={(e) => setDraft(e.target.value)}
-                  />
-                  <div className={styles.buttonRow}>
-                    <button
-                      type="button"
-                      className={styles.secondary}
-                      onClick={sendDraft}
-                      disabled={!draft.trim() || status !== "active" || sttPending || recording}
-                    >
-                      Send answer
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.secondary}
-                      onClick={sendClarificationDraft}
-                      disabled={!draft.trim() || status !== "active" || sttPending || recording || !question}
-                    >
-                      Ask clarification
-                    </button>
-                  </div>
-                </div>
-              </details>
-            </div>
-          </div>
-        )}
-
-        {tab === "coach" && (
-          <div className={styles.card}>
-            <p className={styles.kicker}>Coach</p>
-            <h1 className={styles.title}>Glanceable feedback.</h1>
-            <p className={styles.subtitle}>Small adjustments, big clarity. Keep this open between questions.</p>
-
-            <div className={styles.section}>
-              <div className={styles.twoCol}>
-                <div className={styles.panel}>
-                  <h2 className={styles.cardTitle}>Signals</h2>
-                  <div className={styles.section}>
-                    <div className={styles.pillRow} aria-label="Live metrics">
-                      <span className={styles.pill}>Rate: {status === "active" ? `${sensorMetrics.speakingRate || "—"} wpm` : "—"}</span>
-                      <span className={styles.pill}>Pause: {status === "active" ? sensorMetrics.pauseRatio : "—"}</span>
-                      <span className={styles.pill}>Center: {status === "active" ? `${sensorMetrics.gaze}%` : "—"}</span>
-                      <span className={styles.pill}>Fillers: {analytics.fillers}</span>
-                    </div>
-                    <p className={styles.helper}>{streamError || "Grant mic/cam permissions to unlock live telemetry."}</p>
-                  </div>
-                </div>
-
-                <div className={styles.panel}>
-                  <h2 className={styles.cardTitle}>Preview</h2>
-                  <video ref={previewRef} muted playsInline style={{ width: "100%", borderRadius: 16, background: "#0f172a" }} />
-                </div>
-              </div>
-
-              <details className={styles.panel}>
-                <summary className={styles.detailsSummary}>Session settings</summary>
-                <div className={styles.section}>
-                  <div className={styles.panel}>
-                    <div className={styles.optionTitle}>Interviewer tone</div>
-                    <div style={{ marginTop: 10 }}>{styleControls}</div>
-                    <p className={styles.helper} style={{ marginTop: 10 }}>
-                      {group === "control" ? "Control group keeps the interviewer neutral." : "Treatment group supports style switching."}
-                    </p>
-                  </div>
-                  <div className={styles.panel}>
-                    <div className={styles.optionTitle}>Automation</div>
-                    <div className={styles.section}>
-                      <label className={styles.checkbox}>
-                        <input type="checkbox" checked={autoListen} onChange={(e) => setAutoListen(e.target.checked)} />
-                        <span>Auto-listen after each question</span>
-                      </label>
-                      <label className={styles.checkbox}>
-                        <input type="checkbox" checked={autoSendVoice} onChange={(e) => setAutoSendVoice(e.target.checked)} />
-                        <span>Auto-send when speech finishes</span>
-                      </label>
-                    </div>
-                  </div>
-                </div>
-              </details>
-
-              <div className={styles.panel}>
-                <h2 className={styles.cardTitle}>Tips</h2>
-                {tips.length === 0 ? (
-                  <p className={styles.cardText}>Answer once to get concise recommendations.</p>
                 ) : (
-                  <div className={styles.section}>
-                    {tips.map((tip) => (
-                      <div key={tip.summary} className={styles.panel}>
-                        <div className={styles.optionTitle}>{tip.summary}</div>
-                        <div className={styles.cardText} style={{ marginTop: 6 }}>
-                          {tip.detail}
+                  <>
+                    {tab === "answer" && (
+                      <div className={styles.section}>
+                        <h2 className={styles.cardTitle}>Voice</h2>
+                        <div className={styles.buttonRow}>
+                          {recording ? (
+                            <button type="button" className={styles.primary} disabled={status !== "active" || sttPending} onClick={stopRecording}>
+                              Stop & transcribe{recordingMode === "clarification" ? " (clarify)" : ""}
+                            </button>
+                          ) : (
+                            <>
+                              <button type="button" className={styles.primary} disabled={status !== "active" || sttPending || !question} onClick={() => startRecording("answer")}>Tap to answer</button>
+                              <button type="button" className={styles.secondary} disabled={status !== "active" || sttPending || !question} onClick={() => startRecording("clarification")}>Tap to clarify</button>
+                            </>
+                          )}
+                          <button type="button" className={styles.secondary} disabled={!question || sttPending || status !== "active" || recording} onClick={() => { stopRecording(); speakQuestion(question); }}>Replay</button>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {tab === "transcript" && (
-          <div className={styles.card}>
-            <p className={styles.kicker}>Transcript</p>
-            <h1 className={styles.title}>See your turns.</h1>
-            <p className={styles.subtitle}>This is what you actually said — helpful for spotting patterns.</p>
-
-            <div className={styles.section}>
-              <div className={styles.panel}>
-                <h2 className={styles.cardTitle}>Conversation</h2>
-                {messages.length === 0 ? (
-                  <p className={styles.cardText}>Start the interview to begin capturing turns.</p>
-                ) : (
-                  <div className={styles.section}>
-                    {messages.map((m, idx) => (
-                      <div key={`${m.role}-${idx}`} className={styles.panel}>
-                        <div className={styles.statusRow}>
-                          <div className={styles.optionTitle}>{m.role === "user" ? "You" : "Interviewer"}</div>
-                          <div className={styles.step}>
-                            Turn {m.turn + 1}
-                            {m.style ? ` • ${STYLE_LABELS[m.style]}` : ""}
+                        <p className={styles.helper} style={{ marginTop: 8 }}>
+                          {listening ? (sttPending ? "Transcribing…" : "Recording — speak naturally.") : "Not recording."}
+                        </p>
+                        {nudge && (
+                          <div className={styles.nudge} role="status" aria-live="polite">
+                            <span className={styles.nudgeDot} aria-hidden />
+                            <span>{nudge.message}</span>
                           </div>
-                        </div>
-                        <div className={styles.cardText} style={{ marginTop: 8 }}>
-                          {m.content}
-                        </div>
+                        )}
+                        <details style={{ marginTop: 16 }}>
+                          <summary className={styles.detailsSummary}>Type instead</summary>
+                          <textarea className={styles.textarea} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Type your answer..." />
+                          <div className={styles.buttonRow}>
+                            <button type="button" className={styles.secondary} onClick={sendDraft} disabled={!draft.trim() || status !== "active"}>Send answer</button>
+                          </div>
+                        </details>
                       </div>
-                    ))}
-                  </div>
+                    )}
+
+                    {tab === "coach" && (
+                      <div className={styles.section}>
+                        <h2 className={styles.cardTitle}>Signals</h2>
+                        <div className={styles.pillRow}>
+                          <span className={styles.pill}>Rate: {sensorMetrics.speakingRate || "—"} wpm</span>
+                          <span className={styles.pill}>Pause: {sensorMetrics.pauseRatio}</span>
+                          <span className={styles.pill}>Fillers: {analytics.fillers}</span>
+                        </div>
+                        <video ref={previewRef} muted playsInline style={{ width: "100%", borderRadius: 12, marginTop: 12, background: "#000" }} />
+                      </div>
+                    )}
+
+                    {tab === "transcript" && (
+                      <div className={styles.section} style={{ maxHeight: "400px", overflowY: "auto" }}>
+                        <h2 className={styles.cardTitle}>Conversation</h2>
+                        {messages.map((m, idx) => (
+                          <div key={idx} style={{ marginBottom: 12, padding: 8, borderBottom: "1px solid #eee" }}>
+                            <div style={{ fontWeight: "bold", fontSize: "12px" }}>{m.role === "user" ? "You" : "Interviewer"}</div>
+                            <div style={{ fontSize: "14px" }}>{m.content}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
 
-              <div className={styles.buttonRow}>
-                <button type="button" className={styles.secondary} disabled={!sessionId} onClick={handleEnd}>
-                  End & review
-                </button>
-                <Link className={styles.secondary} href="/lab">
-                  Open lab mode
-                </Link>
+              {/* Right Column: Presence (Always Persistent) */}
+              <div className={styles.panel} style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                <h2 className={styles.cardTitle}>Presence</h2>
+                <div style={{ width: "300px", height: "300px", position: "relative", borderRadius: "16px", overflow: "hidden", background: "#f1f5f9" }}>
+                  {useHeyGenAvatar ? (
+                    <HeyGenAvatar
+                      questionText={status === "active" ? question : ""}
+                      questionId={turn}
+                      debug={true}
+                      onReady={() => {
+                        console.log("[Interview] HeyGen Avatar ready");
+                        setAvatarReady(true);
+                      }}
+                      onError={(error) => {
+                        console.error("[Interview] HeyGen Avatar error:", error);
+                        setAvatarReady(false);
+                      }}
+                    />
+                  ) : (
+                    <Avatar style={style} talking={interviewerTalking} userTalking={userTalking} listening={listening} />
+                  )}
+                </div>
+                <div style={{ marginTop: 12, textAlign: "center" }}>
+                  <div className={styles.badge}>{STYLE_LABELS[style]}</div>
+                  {useHeyGenAvatar && isPreparing && (
+                    <p className={styles.helper} style={{ marginTop: 8 }}>
+                      {avatarReady ? "✅ Avatar Ready" : "⏳ Initializing..."}
+                    </p>
+                  )}
+                  {!isPreparing && lastTip && (
+                    <p className={styles.helper} style={{ marginTop: 8 }}>{lastTip.summary}</p>
+                  )}
+                </div>
               </div>
             </div>
           </div>
-        )}
+        </div>
       </div>
     </main>
   );
 }
+
+
