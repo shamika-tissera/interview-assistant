@@ -63,7 +63,7 @@ export default function HistoryPage() {
     <main className={styles.shell}>
       <div className={styles.container}>
         <div className={styles.topBar}>
-          <Link className={styles.link} href="/">
+          <Link className={styles.navLink} href="/">
             Home
           </Link>
           <div className={styles.step}>History</div>
@@ -93,7 +93,7 @@ export default function HistoryPage() {
 
           {!loading && error && (
             <div className={styles.card}>
-              <p className={styles.cardText} style={{ color: "#dc2626" }}>
+              <p className={styles.cardText} style={{ color: "var(--danger)" }}>
                 {error}
               </p>
             </div>

@@ -51,7 +51,7 @@ export default function SetupPage() {
     <main className={styles.shell}>
       <div className={styles.container}>
         <div className={styles.topBar}>
-          <Link className={styles.link} href="/">
+          <Link className={styles.navLink} href="/">
             Home
           </Link>
           <div className={styles.step}>Step 1 of 3</div>

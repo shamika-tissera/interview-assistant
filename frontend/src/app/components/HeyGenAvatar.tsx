@@ -290,7 +290,7 @@ export function HeyGenAvatar({
               padding: "4px 12px",
               fontSize: "12px",
               backgroundColor: "white",
-              color: "#dc2626",
+              color: "var(--danger)",
               border: "none",
               borderRadius: "4px",
               cursor: "pointer",

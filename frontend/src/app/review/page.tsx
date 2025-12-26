@@ -514,7 +514,7 @@ function ReviewPageInner() {
     <main className={styles.shell}>
       <div className={styles.container}>
         <div className={styles.topBar}>
-          <Link className={styles.link} href="/setup">
+          <Link className={styles.navLink} href="/setup">
             New session
           </Link>
           <div className={styles.step}>{sessionId ? `Session ${sessionId.slice(0, 8)}` : "No session loaded"}</div>
@@ -608,7 +608,7 @@ function ReviewPageInner() {
                 </div>
               </>
             ) : (
-              <p className={styles.cardText} style={{ color: reportError ? "#dc2626" : undefined }}>
+              <p className={styles.cardText} style={{ color: reportError ? "var(--danger)" : undefined }}>
                 {reportError || (loading ? "Loading…" : "No session data yet.")}
               </p>
             )}
@@ -735,7 +735,7 @@ function ReviewPageInner() {
         </div>
 
         <div className={styles.center} style={{ marginTop: 22 }}>
-          <Link className={styles.link} href="/">
+          <Link className={styles.navLink} href="/">
             Back to Home
           </Link>
         </div>

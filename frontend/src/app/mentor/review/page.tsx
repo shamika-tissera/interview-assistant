@@ -146,7 +146,7 @@ function MentorReviewInner() {
     <main className={styles.shell}>
       <div className={styles.container}>
         <div className={styles.topBar}>
-          <Link className={styles.link} href={sessionId ? `/review?sessionId=${encodeURIComponent(sessionId)}` : "/review"}>
+          <Link className={styles.navLink} href={sessionId ? `/review?sessionId=${encodeURIComponent(sessionId)}` : "/review"}>
             Back to report
           </Link>
           <div className={styles.step}>Mentor review</div>
@@ -159,7 +159,7 @@ function MentorReviewInner() {
 
           {!sessionId && <p className={styles.cardText}>Missing `sessionId`.</p>}
           {error && (
-            <p className={styles.cardText} style={{ color: "#dc2626" }}>
+            <p className={styles.cardText} style={{ color: "var(--danger)" }}>
               {error}
             </p>
           )}

@@ -237,7 +237,7 @@ function InterviewInner({ setup }: { setup: InterviewSetup | null }) {
         <video ref={videoRef} muted playsInline className={styles.sensorVideo} />
         
         <div className={styles.topBar}>
-          <Link className={styles.link} href="/setup">Setup</Link>
+          <Link className={styles.navLink} href="/setup">Setup</Link>
           <div className={styles.tabs} aria-label="Interview tabs">
             <button type="button" className={`${styles.tab} ${tab === "answer" ? styles.tabActive : ""}`} onClick={() => setTab("answer")}>Answer</button>
             <button type="button" className={`${styles.tab} ${tab === "coach" ? styles.tabActive : ""}`} onClick={() => setTab("coach")}>Coach</button>

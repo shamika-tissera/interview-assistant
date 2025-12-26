@@ -80,7 +80,7 @@ export default function CheckPage() {
     <main className={styles.shell}>
       <div className={styles.container}>
         <div className={styles.topBar}>
-          <Link className={styles.link} href="/setup">
+          <Link className={styles.navLink} href="/setup">
             Back
           </Link>
           <div className={styles.step}>Step 2 of 3</div>
@@ -106,7 +106,7 @@ export default function CheckPage() {
                   If it stays flat, check browser permissions and your microphone selection.
                 </p>
                 {error && (
-                  <p className={styles.helper} style={{ marginTop: 10, color: "#dc2626" }}>
+                  <p className={styles.helper} style={{ marginTop: 10, color: "var(--danger)" }}>
                     {error}
                   </p>
                 )}
