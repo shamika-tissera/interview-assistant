@@ -9,3 +9,4 @@ python-multipart==0.0.9
 TTS==0.22.0
 httpx==0.27.2
 soundfile==0.12.1
+transformers==4.33.3

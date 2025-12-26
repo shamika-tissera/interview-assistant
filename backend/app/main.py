@@ -27,12 +27,20 @@ from tempfile import NamedTemporaryFile
 from collections import OrderedDict
 
 import httpx
+import torch
+from TTS.tts.configs import xtts_config
+from TTS.tts.models.xtts import XttsAudioConfig, XttsArgs
+from TTS.config.shared_configs import BaseDatasetConfig
 from app.db import get_session, init_db
 from app.models import AnswerRecord, CheckInRecord, SessionRecord, TelemetryRecord
 import logging
 import traceback
 
 os.environ.setdefault("NUMBA_CACHE_DIR", "/tmp/numba")
+
+torch.serialization.add_safe_globals(
+    [xtts_config.XttsConfig, XttsAudioConfig, XttsArgs, BaseDatasetConfig]
+)
 
 from faster_whisper import WhisperModel
 from TTS.api import TTS
