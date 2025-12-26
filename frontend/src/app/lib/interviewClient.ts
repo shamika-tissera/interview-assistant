@@ -185,15 +185,19 @@ export function useMediaSensors(active: boolean) {
       const videoEl = videoRef.current;
       if (!videoEl) return;
       if (landmarkerRef.current) {
-        const result = landmarkerRef.current.detectForVideo(videoEl, performance.now());
-        if (result.faceLandmarks.length > 0 && videoEl.videoWidth > 0) {
-          const lm = result.faceLandmarks[0];
-          const xs = lm.map((p) => p.x);
-          const minX = Math.min(...xs);
-          const maxX = Math.max(...xs);
-          const centerX = (minX + maxX) / 2;
-          const ratio = 1 - Math.min(1, Math.abs(centerX - 0.5) * 2);
-          setMetrics((prev) => ({ ...prev, gaze: Math.round(ratio * 100) }));
+        try {
+          const result = landmarkerRef.current.detectForVideo(videoEl, performance.now());
+          if (result.faceLandmarks.length > 0 && videoEl.videoWidth > 0) {
+            const lm = result.faceLandmarks[0];
+            const xs = lm.map((p) => p.x);
+            const minX = Math.min(...xs);
+            const maxX = Math.max(...xs);
+            const centerX = (minX + maxX) / 2;
+            const ratio = 1 - Math.min(1, Math.abs(centerX - 0.5) * 2);
+            setMetrics((prev) => ({ ...prev, gaze: Math.round(ratio * 100) }));
+          }
+        } catch (err) {
+          console.error("[FaceLoop] Error detecting face landmarks:", err);
         }
       }
       faceLoopRef.current = window.setTimeout(loop, 200);
