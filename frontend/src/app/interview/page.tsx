@@ -43,7 +43,7 @@ function InterviewInner({ setup }: { setup: InterviewSetup | null }) {
   
   // 准备状态和 Avatar 选择
   const [isPreparing, setIsPreparing] = useState(true);
-  const [useHeyGenAvatar, setUseHeyGenAvatar] = useState(true);
+  const [useHeyGenAvatar, setUseHeyGenAvatar] = useState(false);
   const [avatarReady, setAvatarReady] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
 
@@ -386,7 +386,14 @@ function InterviewInner({ setup }: { setup: InterviewSetup | null }) {
                       }}
                     />
                   ) : (
-                    <Avatar style={style} talking={interviewerTalking} userTalking={userTalking} listening={listening} />
+                    <Avatar
+                      style={style}
+                      talking={interviewerTalking}
+                      userTalking={userTalking}
+                      listening={listening}
+                      fill
+                      showStatus={false}
+                    />
                   )}
                 </div>
                 <div style={{ marginTop: 12, textAlign: "center" }}>
@@ -408,5 +415,4 @@ function InterviewInner({ setup }: { setup: InterviewSetup | null }) {
     </main>
   );
 }
-
 

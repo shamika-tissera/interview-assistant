@@ -548,7 +548,7 @@ details[open] .detailsSummary::after {
     text-decoration: underline;
   }
 
-  .pill:hover {
+  .pill:not(.pillActive):hover {
     border-color: var(--border-strong);
     background: rgba(248, 250, 252, 0.92);
     transform: translateY(-1px);
@@ -627,7 +627,7 @@ details[open] .detailsSummary::after {
   }
 
   .secondary,
-  .pill,
+  .pill:not(.pillActive),
   .navLink,
   .featureCard {
     background: rgba(15, 23, 42, 0.55);

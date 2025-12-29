@@ -8,11 +8,15 @@ export function Avatar({
   talking,
   userTalking,
   listening,
+  fill = false,
+  showStatus = true,
 }: {
   style: Style;
   talking: boolean;
   userTalking: boolean;
   listening: boolean;
+  fill?: boolean;
+  showStatus?: boolean;
 }) {
   const moodClass = {
     supportive: styles.avatarSupportive,
@@ -23,7 +27,7 @@ export function Avatar({
   const status = talking ? "Interviewer speaking" : listening ? "Listening to you" : userTalking ? "You’re speaking" : "Idle";
 
   return (
-    <div className={`${styles.avatarShell} ${moodClass}`}>
+    <div className={`${styles.avatarShell} ${fill ? styles.avatarShellFill : ""} ${moodClass}`}>
       <div className={styles.avatarFace}>
         <div className={`${styles.eye} ${styles.eyeLeft}`} />
         <div className={`${styles.eye} ${styles.eyeRight}`} />
@@ -32,8 +36,7 @@ export function Avatar({
         <div className={`${styles.mouth} ${mouthClass}`} />
         {listening && <div className={styles.listenGlow} />}
       </div>
-      <div className={styles.avatarStatusText}>{status}</div>
+      {showStatus && <div className={styles.avatarStatusText}>{status}</div>}
     </div>
   );
 }
-
